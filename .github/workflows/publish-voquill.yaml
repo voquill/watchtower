@@ -1,0 +1,58 @@
+name: Publish (voquill)
+
+# Builds Watchtower from source and publishes it to ghcr.io/voquill/watchtower so
+# we own the image we run on the on-prem agent boxes (supply-chain / vulnerability
+# control) instead of pulling an upstream build. Multi-arch; :latest on main,
+# :X.Y.Z on version tags, :sha-<commit> always.
+#
+# Public image (no secrets). After the first push, set the package visibility to
+# Public once: Org → Packages → watchtower → Package settings → Change visibility.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: publish-voquill-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags/history for `git describe` inside the build
+
+      - uses: docker/setup-qemu-action@v3 # arm64 emulation for multi-arch
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/voquill/watchtower
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/docker/Dockerfile.self-local
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
