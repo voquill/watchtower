@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	dockerConfig "github.com/docker/cli/cli/config/types"
 
 	"github.com/nicholas-fedor/watchtower/pkg/registry/auth"
+	"github.com/nicholas-fedor/watchtower/pkg/registry/voquill"
 )
 
 // Errors for registry authentication operations.
@@ -29,6 +31,8 @@ var (
 	errFailedLoadDockerConfig = errors.New("failed to load Docker config")
 	// errFailedMarshalAuthConfig indicates a failure to marshal the auth config to JSON.
 	errFailedMarshalAuthConfig = errors.New("failed to marshal auth config to JSON")
+	// errFailedVoquillAuth indicates Voquill auth applied but minting a token failed.
+	errFailedVoquillAuth = errors.New("failed to obtain Voquill registry credentials")
 )
 
 // EncodedAuth attempts to retrieve encoded authentication credentials for a given image name.
@@ -48,6 +52,27 @@ func EncodedAuth(imageName string) (string, error) {
 	}
 
 	logrus.WithFields(fields).Debug("Attempting to retrieve auth credentials")
+
+	// Voquill-minted credentials take precedence when Voquill auth is configured
+	// and the image targets the Voquill registry. The vlk_ API key is exchanged
+	// for a short-lived Artifact Registry token, so no static key or refreshed
+	// config.json is required on the box.
+	if creds, ok, voquillErr := voquill.CredentialsFor(context.Background(), imageName); ok {
+		if voquillErr != nil {
+			logrus.WithError(voquillErr).
+				WithFields(fields).
+				Warn("Failed to obtain Voquill registry credentials")
+
+			return "", fmt.Errorf("%w: %w", errFailedVoquillAuth, voquillErr)
+		}
+
+		logrus.WithFields(fields).Debug("Using Voquill-minted registry credentials")
+
+		return EncodeCredentials(dockerConfig.AuthConfig{
+			Username: creds.Username,
+			Password: creds.Password,
+		})
+	}
 
 	// Try environment variables first.
 	credentials, err := EncodedEnvAuth()

@@ -585,6 +585,42 @@ Environment Variable: WATCHTOWER_REGISTRY_TLS_MIN_VERSION
 !!! Warning
     Using older versions of TLS not recommended for security reasons.
 
+### Voquill Authentication
+
+Authenticates to a private Google Artifact Registry using a Voquill API key, instead of a static
+registry credential or a separate credential-refresher sidecar. When a Voquill API key and cloud URL
+are configured, Watchtower exchanges the key for a short-lived (~1h) Artifact Registry pull token via
+`POST {cloud-url}/v1/agent/registry-token` and caches it in memory, refreshing it before it expires.
+This applies only to images on the configured Voquill registry; all other registries fall back to the
+usual credential sources (environment variables and the Docker config file).
+
+The API key must be a `vlk_` key whose role carries the `registry:pull` permission.
+
+```text
+            Argument: --voquill-api-key
+Environment Variable: WATCHTOWER_VOQUILL_API_KEY
+                Type: String (e.g., "vlk_...")
+             Default: None
+```
+
+```text
+            Argument: --voquill-cloud-url
+Environment Variable: WATCHTOWER_VOQUILL_CLOUD_URL
+                Type: String (e.g., "https://api.voquill.com")
+             Default: None
+```
+
+```text
+            Argument: --voquill-registry
+Environment Variable: WATCHTOWER_VOQUILL_REGISTRY
+                Type: String
+             Default: us-central1-docker.pkg.dev
+```
+
+!!! Note
+    Voquill auth is enabled only when both `--voquill-api-key` and `--voquill-cloud-url` are set.
+    Provide the key via a Docker secret or environment file rather than on the command line.
+
 ### Proxy Configuration
 
 Watchtower supports HTTP/HTTPS proxies for registry connections by respecting standard environment variables.

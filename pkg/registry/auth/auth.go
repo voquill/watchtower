@@ -524,18 +524,34 @@ func ProcessChallenge(wwwAuthHeader, image string) (string, string, string, erro
 		}
 	}
 
-	realm, realmOK := values["realm"]
-	service, serviceOK := values["service"]
+	realm := values["realm"]
+	service := values["service"]
 	scope := values["scope"] // Scope is optional
 
-	if !realmOK || !serviceOK {
-		logrus.WithFields(fields).Warn("Missing required challenge header values: realm or service")
+	// Realm is mandatory: without it we cannot locate the token endpoint.
+	if realm == "" {
+		logrus.WithFields(fields).Warn("Missing required challenge header value: realm")
 
 		return "", "", "", fmt.Errorf(
-			"%w: missing realm or service in header: %s",
+			"%w: missing realm in header: %s",
 			errInvalidChallengeHeader,
 			wwwAuthHeader,
 		)
+	}
+
+	// Service is optional in practice. Some registries (notably Google Artifact
+	// Registry) omit service from the /v2/ ping challenge but still expect it,
+	// set to the registry host, on the token request. Default it to the
+	// registry host so these registries authenticate instead of erroring.
+	if service == "" {
+		host, hostErr := GetRegistryAddress(image)
+		if hostErr == nil && host != "" {
+			service = host
+
+			logrus.WithFields(fields).
+				WithField("service", service).
+				Debug("Service missing in challenge; defaulting to registry host")
+		}
 	}
 
 	if scope == "" {
@@ -726,6 +742,18 @@ func GetAuthURL(challenge string, imageRef reference.Named) (*url.URL, error) {
 		values["realm"] = "https://ghcr.io/token"
 	}
 
+	// Default a missing service to the registry host. Some registries (notably
+	// Google Artifact Registry) omit service from the /v2/ ping challenge but
+	// still require it, set to the registry host, on the token request.
+	if values["service"] == "" && registryAddress != "" {
+		values["service"] = registryAddress
+
+		logrus.WithFields(logrus.Fields{
+			"image":   imageRef.Name(),
+			"service": registryAddress,
+		}).Debug("Service missing in challenge; defaulting to registry host")
+	}
+
 	logrus.WithFields(logrus.Fields{
 		"image":   imageRef.Name(),
 		"realm":   values["realm"],
@@ -733,14 +761,15 @@ func GetAuthURL(challenge string, imageRef reference.Named) (*url.URL, error) {
 		"scope":   values["scope"],
 	}).Debug("Parsed challenge header")
 
-	// Validate required fields.
-	if values["realm"] == "" || values["service"] == "" {
+	// Realm is mandatory: without it we cannot locate the token endpoint.
+	if values["realm"] == "" {
 		return nil, errInvalidChallengeHeader
 	}
 
-	// Parse the realm into a URL.
+	// Parse the realm into a URL. It must be an absolute URL (scheme + host);
+	// a bare value like "invalid" cannot be used as a token endpoint.
 	authURL, err := url.Parse(values["realm"])
-	if err != nil || authURL == nil {
+	if err != nil || authURL == nil || authURL.Scheme == "" || authURL.Host == "" {
 		clog := logrus.WithFields(logrus.Fields{
 			"image": imageRef.Name(),
 			"realm": values["realm"],
@@ -748,7 +777,7 @@ func GetAuthURL(challenge string, imageRef reference.Named) (*url.URL, error) {
 		if err != nil {
 			clog.WithError(err).Debug("Failed to parse realm URL")
 		} else {
-			clog.Debug("Invalid realm URL (nil after parsing)")
+			clog.Debug("Invalid realm URL (not an absolute URL)")
 		}
 
 		return nil, fmt.Errorf("%w: %s", errInvalidRealmURL, values["realm"])
@@ -756,7 +785,9 @@ func GetAuthURL(challenge string, imageRef reference.Named) (*url.URL, error) {
 
 	// Add query parameters for service and scope.
 	query := authURL.Query()
-	query.Add("service", values["service"])
+	if values["service"] != "" {
+		query.Add("service", values["service"])
+	}
 
 	scopeImage := reference.Path(imageRef)
 	scope := fmt.Sprintf("repository:%s:pull", scopeImage)

@@ -682,7 +682,7 @@ var _ = ginkgo.Describe("Digests", func() {
 			_, _, _, _, err := auth.GetToken(ctx, mockContainerWithServer, registryAuth, client, "")
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).
-				To(gomega.ContainSubstring("challenge header did not include all values needed to construct an auth url"))
+				To(gomega.ContainSubstring("invalid realm URL in challenge header"))
 
 			matches, err := digest.CompareDigest(
 				ctx,
@@ -691,7 +691,7 @@ var _ = ginkgo.Describe("Digests", func() {
 			)
 			gomega.Expect(err).To(gomega.HaveOccurred())
 			gomega.Expect(err.Error()).
-				To(gomega.ContainSubstring("challenge header did not include all values needed to construct an auth url"))
+				To(gomega.ContainSubstring("invalid realm URL in challenge header"))
 			gomega.Expect(matches).To(gomega.BeFalse())
 			gomega.Expect(server.ReceivedRequests()).Should(gomega.HaveLen(2))
 		})

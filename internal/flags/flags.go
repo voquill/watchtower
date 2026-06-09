@@ -364,6 +364,30 @@ func RegisterSystemFlags(rootCmd *cobra.Command) {
 		"Minimum TLS version for registry connections (e.g., TLS1.0, TLS1.1, TLS1.2, TLS1.3); default is TLS1.2",
 	)
 	viper.MustBindEnv("WATCHTOWER_REGISTRY_TLS_MIN_VERSION")
+
+	// Voquill authentication: exchange a Voquill API key for short-lived
+	// Artifact Registry pull tokens, removing the need for a static registry
+	// credential or a separate credential-refresher sidecar.
+	flags.String(
+		"voquill-api-key",
+		envString("WATCHTOWER_VOQUILL_API_KEY"),
+		"Voquill API key (vlk_...) with the registry:pull permission, used to mint short-lived registry tokens",
+	)
+	viper.MustBindEnv("WATCHTOWER_VOQUILL_API_KEY")
+
+	flags.String(
+		"voquill-cloud-url",
+		envString("WATCHTOWER_VOQUILL_CLOUD_URL"),
+		"Base URL of the Voquill cloud API (e.g. https://api.voquill.com); enables Voquill auth together with --voquill-api-key",
+	)
+	viper.MustBindEnv("WATCHTOWER_VOQUILL_CLOUD_URL")
+
+	flags.String(
+		"voquill-registry",
+		envString("WATCHTOWER_VOQUILL_REGISTRY"),
+		"Registry host Voquill auth applies to (default us-central1-docker.pkg.dev)",
+	)
+	viper.MustBindEnv("WATCHTOWER_VOQUILL_REGISTRY")
 }
 
 // RegisterNotificationFlags adds notification flags to the root command.
