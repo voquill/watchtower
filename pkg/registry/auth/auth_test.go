@@ -931,6 +931,72 @@ var _ = ginkgo.Describe("the auth module", func() {
 			gomega.Expect(server.ReceivedRequests()).To(gomega.HaveLen(1))
 			gomega.Expect(redirectServer.ReceivedRequests()).To(gomega.HaveLen(1))
 		})
+
+		// Test case: Simulates Google Artifact Registry, whose /v2/ ping returns a
+		// Bearer challenge with only a realm (no service). Verifies GetToken still
+		// succeeds by defaulting service to the registry host on the token request.
+		ginkgo.It("should authenticate against a service-less GAR-style challenge", func() {
+			defer ginkgo.GinkgoRecover()
+
+			tokenServer := ghttp.NewTLSServer()
+
+			tokenServer.AppendHandlers(
+				ghttp.CombineHandlers(
+					ghttp.VerifyRequest("GET", "/token"),
+					// service must be defaulted to the registry host on the token request.
+					func(_ http.ResponseWriter, req *http.Request) {
+						gomega.Expect(req.URL.Query().Get("service")).NotTo(gomega.BeEmpty())
+					},
+					ghttp.RespondWith(http.StatusOK, `{"token": "gar-token"}`),
+				),
+			)
+			defer tokenServer.Close()
+
+			server := ghttp.NewTLSServer()
+
+			server.AppendHandlers(
+				ghttp.CombineHandlers(
+					ghttp.VerifyRequest("GET", "/v2/"),
+					ghttp.RespondWith(
+						http.StatusUnauthorized,
+						"",
+						http.Header{
+							// No service field — mirrors GAR's /v2/ ping response.
+							"WWW-Authenticate": []string{
+								fmt.Sprintf(`Bearer realm="https://%s/token"`, tokenServer.Addr()),
+							},
+						},
+					),
+				),
+			)
+			defer server.Close()
+
+			containerInstance := mockContainer{
+				id:        mockID,
+				name:      mockName,
+				imageName: server.Addr() + "/test/image:latest",
+			}
+
+			client := &testAuthClient{
+				client: &http.Client{
+					Transport: &http.Transport{
+						TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+					},
+				},
+			}
+
+			token, _, _, _, err := auth.GetToken(
+				context.Background(),
+				containerInstance,
+				"",
+				client,
+				"",
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(token).To(gomega.Equal("Bearer gar-token"))
+			gomega.Expect(server.ReceivedRequests()).To(gomega.HaveLen(1))
+			gomega.Expect(tokenServer.ReceivedRequests()).To(gomega.HaveLen(1))
+		})
 		// Test case: Verifies that GetToken returns redirect=false when the challenge request is not redirected.
 		ginkgo.It("should return redirect=false when challenge request is not redirected", func() {
 			defer ginkgo.GinkgoRecover()
@@ -1355,9 +1421,11 @@ var _ = ginkgo.Describe("the auth module", func() {
 
 		ginkgo.When("given an invalid challenge header", func() {
 			// Test case: Verifies GetAuthURL returns an error when the challenge header lacks
-			// required fields (e.g., service). Ensures robust error handling for malformed inputs.
+			// the mandatory realm field. Ensures robust error handling for malformed inputs.
+			// (A missing service is tolerated and defaulted to the registry host, since
+			// Google Artifact Registry's /v2/ ping omits service; see TestGetAuthURL_DefaultsServiceToHost.)
 			ginkgo.It("should return an error", func() {
-				challenge := `bearer realm="https://ghcr.io/token"`
+				challenge := `bearer service="ghcr.io"`
 				imageRef, err := reference.ParseNormalizedNamed("nicholas-fedor/watchtower")
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				URL, err := auth.GetAuthURL(challenge, imageRef)
