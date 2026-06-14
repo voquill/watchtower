@@ -37,7 +37,6 @@ jobs:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     with:
       ENVIRONMENT: CI-Release
-      BUILD_TYPE: stable
       DRY_RUN: ${{ inputs.DRY_RUN || false }}
 
   update-go-docs:
